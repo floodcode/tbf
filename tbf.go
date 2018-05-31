@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/floodcode/tgbot"
 )
@@ -14,9 +15,11 @@ const (
 
 // TelegramBotFramework simplifies interraction with TelegramBot
 type TelegramBotFramework struct {
-	bot      tgbot.TelegramBot
-	routes   map[string]func(BotRequest)
-	cmdMatch *regexp.Regexp
+	bot           tgbot.TelegramBot
+	routes        map[string]func(BotRequest)
+	sessions      map[string]chan BotRequest
+	sessionsMutex sync.Mutex
+	cmdMatch      *regexp.Regexp
 }
 
 // PollConfig represents bot's polling configuration
@@ -36,10 +39,18 @@ type ListenConfig struct {
 
 // BotRequest contains basic information about bot request
 type BotRequest struct {
-	Bot     *tgbot.TelegramBot
-	Message *tgbot.Message
-	Command string
-	Args    string
+	BotFramework *TelegramBotFramework
+	Bot          *tgbot.TelegramBot
+	Message      *tgbot.Message
+	Command      string
+	Args         string
+	session      string
+}
+
+// WaitRequest waits until new message sent in chat-user chain and returns request
+func (r *BotRequest) WaitRequest() BotRequest {
+	result := <-r.BotFramework.sessions[r.session]
+	return result
 }
 
 // New returns new TelegramBotFramework instance
@@ -56,9 +67,11 @@ func New(apiKey string) (TelegramBotFramework, error) {
 
 	cmdMatch := regexp.MustCompile(fmt.Sprintf(cmdMatchTemplate, botUser.Username))
 	return TelegramBotFramework{
-		bot:      bot,
-		routes:   map[string]func(BotRequest){},
-		cmdMatch: cmdMatch,
+		bot:           bot,
+		routes:        map[string]func(BotRequest){},
+		sessions:      map[string]chan BotRequest{},
+		sessionsMutex: sync.Mutex{},
+		cmdMatch:      cmdMatch,
 	}, nil
 }
 
@@ -97,7 +110,7 @@ func (f *TelegramBotFramework) updatesCallback(updates []tgbot.Update) {
 func (f *TelegramBotFramework) processUpdate(update tgbot.Update) {
 	if update.Message != nil {
 		if update.Message.Text != "" {
-			f.matchRoute(update.Message)
+			f.handleRequest(f.buildRequest(update.Message))
 		}
 	}
 }
@@ -112,20 +125,51 @@ func (f *TelegramBotFramework) buildRequest(msg *tgbot.Message) BotRequest {
 	}
 
 	return BotRequest{
-		Bot:     &f.bot,
-		Message: msg,
-		Command: command,
-		Args:    args,
+		BotFramework: f,
+		Bot:          &f.bot,
+		Message:      msg,
+		Command:      command,
+		Args:         args,
+		session:      fmt.Sprintf("%d:%d", msg.Chat.ID, msg.From.ID),
 	}
 }
 
-func (f *TelegramBotFramework) matchRoute(msg *tgbot.Message) {
-	request := f.buildRequest(msg)
-	if len(request.Command) == 0 {
+func (f *TelegramBotFramework) handleRequest(request BotRequest) {
+	f.sessionsMutex.Lock()
+	if _, ok := f.sessions[request.session]; ok {
+		f.sessions[request.session] <- request
+		f.sessionsMutex.Unlock()
 		return
 	}
 
-	if action, ok := f.routes[request.Command]; ok {
-		action(request)
+	if len(request.Command) == 0 {
+		f.sessionsMutex.Unlock()
+		return
+	}
+
+	f.sessions[request.session] = make(chan BotRequest, 10)
+	f.sessions[request.session] <- request
+	f.sessionsMutex.Unlock()
+
+	f.runAction(request.session)
+}
+
+func (f *TelegramBotFramework) runAction(session string) {
+	for {
+		f.sessionsMutex.Lock()
+		select {
+		case req := <-f.sessions[session]:
+			f.sessionsMutex.Unlock()
+			if action, ok := f.routes[req.Command]; ok {
+				action(req)
+			} else {
+				// No such command
+			}
+		default:
+			close(f.sessions[session])
+			delete(f.sessions, session)
+			f.sessionsMutex.Unlock()
+			return
+		}
 	}
 }
