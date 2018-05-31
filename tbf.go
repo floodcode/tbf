@@ -37,22 +37,6 @@ type ListenConfig struct {
 	AllowedUpdates []string
 }
 
-// BotRequest contains basic information about bot request
-type BotRequest struct {
-	BotFramework *TelegramBotFramework
-	Bot          *tgbot.TelegramBot
-	Message      *tgbot.Message
-	Command      string
-	Args         string
-	session      string
-}
-
-// WaitRequest waits until new message sent in chat-user chain and returns request
-func (r *BotRequest) WaitRequest() BotRequest {
-	result := <-r.BotFramework.sessions[r.session]
-	return result
-}
-
 // New returns new TelegramBotFramework instance
 func New(apiKey string) (TelegramBotFramework, error) {
 	bot, err := tgbot.New(apiKey)
@@ -156,16 +140,15 @@ func (f *TelegramBotFramework) handleRequest(request BotRequest) {
 
 func (f *TelegramBotFramework) runAction(session string) {
 	for {
-		f.sessionsMutex.Lock()
 		select {
 		case req := <-f.sessions[session]:
-			f.sessionsMutex.Unlock()
 			if action, ok := f.routes[req.Command]; ok {
 				action(req)
 			} else {
 				// No such command
 			}
 		default:
+			f.sessionsMutex.Lock()
 			close(f.sessions[session])
 			delete(f.sessions, session)
 			f.sessionsMutex.Unlock()
