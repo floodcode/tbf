@@ -1,6 +1,11 @@
 package tbf
 
-import "github.com/floodcode/tgbot"
+import (
+	"errors"
+	"time"
+
+	"github.com/floodcode/tgbot"
+)
 
 // BotRequest contains basic information about bot request
 type BotRequest struct {
@@ -16,6 +21,34 @@ type BotRequest struct {
 func (r *BotRequest) WaitNext() BotRequest {
 	result := <-r.BotFramework.sessions[r.session]
 	return result
+}
+
+// WaitNextTimeout waits with timeout until new message sent in chat-user chain
+// and returns request if new request was made or error if timeout was exceeded
+func (r *BotRequest) WaitNextTimeout(d time.Duration) (BotRequest, error) {
+	select {
+	case result := <-r.BotFramework.sessions[r.session]:
+		return result, nil
+	case <-time.After(d):
+		return BotRequest{}, errors.New("request wait timeout was exceeded")
+	}
+}
+
+// QuickMessage sends text message to the origin chat
+func (r *BotRequest) QuickMessage(text string) (tgbot.Message, error) {
+	return r.Bot.SendMessage(tgbot.SendMessageConfig{
+		ChatID: tgbot.ChatID(r.Message.Chat.ID),
+		Text:   text,
+	})
+}
+
+// QuickMessageMD sends text message with markdown parse mode to the origin chat
+func (r *BotRequest) QuickMessageMD(text string) (tgbot.Message, error) {
+	return r.Bot.SendMessage(tgbot.SendMessageConfig{
+		ChatID:    tgbot.ChatID(r.Message.Chat.ID),
+		Text:      text,
+		ParseMode: tgbot.ParseModeMarkdown(),
+	})
 }
 
 // QuickReply sends text message in reply to the origin message
