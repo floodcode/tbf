@@ -15,11 +15,12 @@ const (
 
 // TelegramBotFramework simplifies interraction with TelegramBot
 type TelegramBotFramework struct {
-	bot           tgbot.TelegramBot
-	routes        map[string]func(BotRequest)
-	sessions      map[string]chan BotRequest
-	sessionsMutex sync.Mutex
-	cmdMatch      *regexp.Regexp
+	bot                    tgbot.TelegramBot
+	routes                 map[string]func(BotRequest)
+	sessions               map[string]chan BotRequest
+	sessionsMutex          sync.Mutex
+	callbackQueryListeners []func(CallbackQueryRequest)
+	cmdMatch               *regexp.Regexp
 }
 
 // PollConfig represents bot's polling configuration
@@ -51,11 +52,12 @@ func New(apiKey string) (TelegramBotFramework, error) {
 
 	cmdMatch := regexp.MustCompile(fmt.Sprintf(cmdMatchTemplate, botUser.Username))
 	return TelegramBotFramework{
-		bot:           bot,
-		routes:        map[string]func(BotRequest){},
-		sessions:      map[string]chan BotRequest{},
-		sessionsMutex: sync.Mutex{},
-		cmdMatch:      cmdMatch,
+		bot:                    bot,
+		routes:                 map[string]func(BotRequest){},
+		sessions:               map[string]chan BotRequest{},
+		sessionsMutex:          sync.Mutex{},
+		callbackQueryListeners: []func(CallbackQueryRequest){},
+		cmdMatch:               cmdMatch,
 	}, nil
 }
 
@@ -85,6 +87,11 @@ func (f *TelegramBotFramework) AddRoute(command string, action func(BotRequest))
 	f.routes[strings.ToLower(command)] = action
 }
 
+// ListenCallbackQuery adds callback query listener
+func (f *TelegramBotFramework) ListenCallbackQuery(listener func(CallbackQueryRequest)) {
+	f.callbackQueryListeners = append(f.callbackQueryListeners, listener)
+}
+
 func (f *TelegramBotFramework) updatesCallback(updates []tgbot.Update) {
 	for _, update := range updates {
 		f.processUpdate(update)
@@ -95,6 +102,14 @@ func (f *TelegramBotFramework) processUpdate(update tgbot.Update) {
 	if update.Message != nil {
 		if update.Message.Text != "" {
 			f.handleRequest(f.buildRequest(update.Message))
+		}
+	} else if update.CallbackQuery != nil {
+		for _, listener := range f.callbackQueryListeners {
+			listener(CallbackQueryRequest{
+				BotFramework:  f,
+				Bot:           &f.bot,
+				CallbackQuery: update.CallbackQuery,
+			})
 		}
 	}
 }
@@ -114,14 +129,14 @@ func (f *TelegramBotFramework) buildRequest(msg *tgbot.Message) BotRequest {
 		Message:      msg,
 		Command:      command,
 		Args:         args,
-		session:      fmt.Sprintf("%d:%d", msg.Chat.ID, msg.From.ID),
+		Session:      fmt.Sprintf("%d:%d", msg.Chat.ID, msg.From.ID),
 	}
 }
 
 func (f *TelegramBotFramework) handleRequest(request BotRequest) {
 	f.sessionsMutex.Lock()
-	if _, ok := f.sessions[request.session]; ok {
-		f.sessions[request.session] <- request
+	if _, ok := f.sessions[request.Session]; ok {
+		f.sessions[request.Session] <- request
 		f.sessionsMutex.Unlock()
 		return
 	}
@@ -131,11 +146,11 @@ func (f *TelegramBotFramework) handleRequest(request BotRequest) {
 		return
 	}
 
-	f.sessions[request.session] = make(chan BotRequest, 10)
-	f.sessions[request.session] <- request
+	f.sessions[request.Session] = make(chan BotRequest, 10)
+	f.sessions[request.Session] <- request
 	f.sessionsMutex.Unlock()
 
-	f.runAction(request.session)
+	f.runAction(request.Session)
 }
 
 func (f *TelegramBotFramework) runAction(session string) {

@@ -14,20 +14,33 @@ type BotRequest struct {
 	Message      *tgbot.Message
 	Command      string
 	Args         string
-	session      string
+	Session      string
 }
 
 // WaitNext waits until new message sent in chat-user chain and returns request
 func (r *BotRequest) WaitNext() BotRequest {
-	result := <-r.BotFramework.sessions[r.session]
+	result := <-r.BotFramework.sessions[r.Session]
 	return result
+}
+
+// SendMessage sends text message with additional parameters to the origin chat
+func (r *BotRequest) SendMessage(config tgbot.SendMessageConfig) (tgbot.Message, error) {
+	config.ChatID = tgbot.ChatID(r.Message.Chat.ID)
+	return r.Bot.SendMessage(config)
+}
+
+// SendReply sends text message with additional parameters in reply to the origin message
+func (r *BotRequest) SendReply(config tgbot.SendMessageConfig) (tgbot.Message, error) {
+	config.ChatID = tgbot.ChatID(r.Message.Chat.ID)
+	config.ReplyToMessageID = r.Message.MessageID
+	return r.Bot.SendMessage(config)
 }
 
 // WaitNextTimeout waits with timeout until new message sent in chat-user chain
 // and returns request if new request was made or error if timeout was exceeded
 func (r *BotRequest) WaitNextTimeout(d time.Duration) (BotRequest, error) {
 	select {
-	case result := <-r.BotFramework.sessions[r.session]:
+	case result := <-r.BotFramework.sessions[r.Session]:
 		return result, nil
 	case <-time.After(d):
 		return BotRequest{}, errors.New("request wait timeout was exceeded")
@@ -76,4 +89,17 @@ func (r *BotRequest) SendTyping() (bool, error) {
 		ChatID: tgbot.ChatID(r.Message.Chat.ID),
 		Action: tgbot.ChatActionTyping(),
 	})
+}
+
+// CallbackQueryRequest contains basic information about bot callback query request
+type CallbackQueryRequest struct {
+	BotFramework  *TelegramBotFramework
+	Bot           *tgbot.TelegramBot
+	CallbackQuery *tgbot.CallbackQuery
+}
+
+// Answer sends answer to the origin callback query
+func (r *CallbackQueryRequest) Answer(config tgbot.AnswerCallbackQueryConfig) (bool, error) {
+	config.CallbackQueryID = r.CallbackQuery.ID
+	return r.Bot.AnswerCallbackQuery(config)
 }
