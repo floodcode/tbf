@@ -15,12 +15,12 @@ const (
 
 // TelegramBotFramework simplifies interraction with TelegramBot
 type TelegramBotFramework struct {
-	bot                    tgbot.TelegramBot
-	routes                 map[string]func(BotRequest)
-	sessions               map[string]chan BotRequest
-	sessionsMutex          sync.Mutex
-	callbackQueryListeners []func(CallbackQueryRequest)
-	cmdMatch               *regexp.Regexp
+	bot                   tgbot.TelegramBot
+	routes                map[string]func(Request)
+	sessions              map[string]chan Request
+	sessionsMutex         sync.Mutex
+	callbackQueryListener func(CallbackQueryRequest)
+	cmdMatch              *regexp.Regexp
 }
 
 // PollConfig represents bot's polling configuration
@@ -52,12 +52,12 @@ func New(apiKey string) (TelegramBotFramework, error) {
 
 	cmdMatch := regexp.MustCompile(fmt.Sprintf(cmdMatchTemplate, botUser.Username))
 	return TelegramBotFramework{
-		bot:                    bot,
-		routes:                 map[string]func(BotRequest){},
-		sessions:               map[string]chan BotRequest{},
-		sessionsMutex:          sync.Mutex{},
-		callbackQueryListeners: []func(CallbackQueryRequest){},
-		cmdMatch:               cmdMatch,
+		bot:                   bot,
+		routes:                map[string]func(Request){},
+		sessions:              map[string]chan Request{},
+		sessionsMutex:         sync.Mutex{},
+		callbackQueryListener: func(CallbackQueryRequest) {},
+		cmdMatch:              cmdMatch,
 	}, nil
 }
 
@@ -83,13 +83,13 @@ func (f *TelegramBotFramework) Listen(config ListenConfig) error {
 }
 
 // AddRoute is used to register new command with callback
-func (f *TelegramBotFramework) AddRoute(command string, action func(BotRequest)) {
+func (f *TelegramBotFramework) AddRoute(command string, action func(Request)) {
 	f.routes[strings.ToLower(command)] = action
 }
 
-// ListenCallbackQuery adds callback query listener
-func (f *TelegramBotFramework) ListenCallbackQuery(listener func(CallbackQueryRequest)) {
-	f.callbackQueryListeners = append(f.callbackQueryListeners, listener)
+// OnCallbackQuery sets callback query listener
+func (f *TelegramBotFramework) OnCallbackQuery(listener func(CallbackQueryRequest)) {
+	f.callbackQueryListener = listener
 }
 
 func (f *TelegramBotFramework) updatesCallback(updates []tgbot.Update) {
@@ -104,17 +104,12 @@ func (f *TelegramBotFramework) processUpdate(update tgbot.Update) {
 			f.handleRequest(f.buildRequest(update.Message))
 		}
 	} else if update.CallbackQuery != nil {
-		for _, listener := range f.callbackQueryListeners {
-			listener(CallbackQueryRequest{
-				BotFramework:  f,
-				Bot:           &f.bot,
-				CallbackQuery: update.CallbackQuery,
-			})
-		}
+		f.callbackQueryListener(f.buildCallbackQueryRequest(update.CallbackQuery))
 	}
 }
 
-func (f *TelegramBotFramework) buildRequest(msg *tgbot.Message) BotRequest {
+func (f *TelegramBotFramework) buildRequest(
+	msg *tgbot.Message) Request {
 	var command string
 	var args string
 	match := f.cmdMatch.FindStringSubmatch(msg.Text)
@@ -123,7 +118,7 @@ func (f *TelegramBotFramework) buildRequest(msg *tgbot.Message) BotRequest {
 		args = strings.TrimSpace(match[2])
 	}
 
-	return BotRequest{
+	return Request{
 		BotFramework: f,
 		Bot:          &f.bot,
 		Message:      msg,
@@ -133,7 +128,16 @@ func (f *TelegramBotFramework) buildRequest(msg *tgbot.Message) BotRequest {
 	}
 }
 
-func (f *TelegramBotFramework) handleRequest(request BotRequest) {
+func (f *TelegramBotFramework) buildCallbackQueryRequest(
+	query *tgbot.CallbackQuery) CallbackQueryRequest {
+	return CallbackQueryRequest{
+		BotFramework:  f,
+		Bot:           &f.bot,
+		CallbackQuery: query,
+	}
+}
+
+func (f *TelegramBotFramework) handleRequest(request Request) {
 	f.sessionsMutex.Lock()
 	if _, ok := f.sessions[request.Session]; ok {
 		f.sessions[request.Session] <- request
@@ -146,11 +150,11 @@ func (f *TelegramBotFramework) handleRequest(request BotRequest) {
 		return
 	}
 
-	f.sessions[request.Session] = make(chan BotRequest, 10)
+	f.sessions[request.Session] = make(chan Request, 10)
 	f.sessions[request.Session] <- request
 	f.sessionsMutex.Unlock()
 
-	f.runAction(request.Session)
+	go f.runAction(request.Session)
 }
 
 func (f *TelegramBotFramework) runAction(session string) {

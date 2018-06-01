@@ -7,8 +7,8 @@ import (
 	"github.com/floodcode/tgbot"
 )
 
-// BotRequest contains basic information about bot request
-type BotRequest struct {
+// Request contains basic information about bot request
+type Request struct {
 	BotFramework *TelegramBotFramework
 	Bot          *tgbot.TelegramBot
 	Message      *tgbot.Message
@@ -18,37 +18,37 @@ type BotRequest struct {
 }
 
 // WaitNext waits until new message sent in chat-user chain and returns request
-func (r *BotRequest) WaitNext() BotRequest {
+func (r Request) WaitNext() Request {
 	result := <-r.BotFramework.sessions[r.Session]
 	return result
 }
 
+// WaitNextTimeout waits with timeout until new message sent in chat-user chain
+// and returns request if new request was made or error if timeout was exceeded
+func (r Request) WaitNextTimeout(d time.Duration) (Request, error) {
+	select {
+	case result := <-r.BotFramework.sessions[r.Session]:
+		return result, nil
+	case <-time.After(d):
+		return Request{}, errors.New("request wait timeout was exceeded")
+	}
+}
+
 // SendMessage sends text message with additional parameters to the origin chat
-func (r *BotRequest) SendMessage(config tgbot.SendMessageConfig) (tgbot.Message, error) {
+func (r Request) SendMessage(config tgbot.SendMessageConfig) (tgbot.Message, error) {
 	config.ChatID = tgbot.ChatID(r.Message.Chat.ID)
 	return r.Bot.SendMessage(config)
 }
 
 // SendReply sends text message with additional parameters in reply to the origin message
-func (r *BotRequest) SendReply(config tgbot.SendMessageConfig) (tgbot.Message, error) {
+func (r Request) SendReply(config tgbot.SendMessageConfig) (tgbot.Message, error) {
 	config.ChatID = tgbot.ChatID(r.Message.Chat.ID)
 	config.ReplyToMessageID = r.Message.MessageID
 	return r.Bot.SendMessage(config)
 }
 
-// WaitNextTimeout waits with timeout until new message sent in chat-user chain
-// and returns request if new request was made or error if timeout was exceeded
-func (r *BotRequest) WaitNextTimeout(d time.Duration) (BotRequest, error) {
-	select {
-	case result := <-r.BotFramework.sessions[r.Session]:
-		return result, nil
-	case <-time.After(d):
-		return BotRequest{}, errors.New("request wait timeout was exceeded")
-	}
-}
-
 // QuickMessage sends text message to the origin chat
-func (r *BotRequest) QuickMessage(text string) (tgbot.Message, error) {
+func (r Request) QuickMessage(text string) (tgbot.Message, error) {
 	return r.Bot.SendMessage(tgbot.SendMessageConfig{
 		ChatID: tgbot.ChatID(r.Message.Chat.ID),
 		Text:   text,
@@ -56,7 +56,7 @@ func (r *BotRequest) QuickMessage(text string) (tgbot.Message, error) {
 }
 
 // QuickMessageMD sends text message with markdown parse mode to the origin chat
-func (r *BotRequest) QuickMessageMD(text string) (tgbot.Message, error) {
+func (r Request) QuickMessageMD(text string) (tgbot.Message, error) {
 	return r.Bot.SendMessage(tgbot.SendMessageConfig{
 		ChatID:    tgbot.ChatID(r.Message.Chat.ID),
 		Text:      text,
@@ -65,7 +65,7 @@ func (r *BotRequest) QuickMessageMD(text string) (tgbot.Message, error) {
 }
 
 // QuickReply sends text message in reply to the origin message
-func (r *BotRequest) QuickReply(text string) (tgbot.Message, error) {
+func (r Request) QuickReply(text string) (tgbot.Message, error) {
 	return r.Bot.SendMessage(tgbot.SendMessageConfig{
 		ChatID:           tgbot.ChatID(r.Message.Chat.ID),
 		Text:             text,
@@ -74,7 +74,7 @@ func (r *BotRequest) QuickReply(text string) (tgbot.Message, error) {
 }
 
 // QuickReplyMD sends text message with markdown parse mode in reply to the origin message
-func (r *BotRequest) QuickReplyMD(text string) (tgbot.Message, error) {
+func (r Request) QuickReplyMD(text string) (tgbot.Message, error) {
 	return r.Bot.SendMessage(tgbot.SendMessageConfig{
 		ChatID:           tgbot.ChatID(r.Message.Chat.ID),
 		Text:             text,
@@ -84,7 +84,7 @@ func (r *BotRequest) QuickReplyMD(text string) (tgbot.Message, error) {
 }
 
 // SendTyping sends chat action "typing" to the origin chat
-func (r *BotRequest) SendTyping() (bool, error) {
+func (r Request) SendTyping() (bool, error) {
 	return r.Bot.SendChatAction(tgbot.SendChatActionConfig{
 		ChatID: tgbot.ChatID(r.Message.Chat.ID),
 		Action: tgbot.ChatActionTyping(),
@@ -98,8 +98,13 @@ type CallbackQueryRequest struct {
 	CallbackQuery *tgbot.CallbackQuery
 }
 
+// NoAnswer sends empty answer to the origin callback query
+func (r CallbackQueryRequest) NoAnswer() (bool, error) {
+	return r.Bot.AnswerCallbackQuery(tgbot.AnswerCallbackQueryConfig{})
+}
+
 // Answer sends answer to the origin callback query
-func (r *CallbackQueryRequest) Answer(config tgbot.AnswerCallbackQueryConfig) (bool, error) {
+func (r CallbackQueryRequest) Answer(config tgbot.AnswerCallbackQueryConfig) (bool, error) {
 	config.CallbackQueryID = r.CallbackQuery.ID
 	return r.Bot.AnswerCallbackQuery(config)
 }
